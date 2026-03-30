@@ -2,26 +2,14 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Note;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 
 class NoteController extends Controller
 {
-    /**
-     * Display a listing of the resource.
-     */
-    // public function index()
-    // {
-    //     // $notes = DB::table('notes')
-    //     //     ->whereNull('deleted_at')
-    //     //     ->orderBy('updated_at', 'desc')
-    //     //     ->get();
-
-    //     $notes = DB::query()->orderByDesc('updated_at')->get();
-    //     return response()->json(['notes' => $notes], Response::HTTP_OK);
-    // }
-
     public function index()
     {
         $notes = Note::query()
@@ -39,19 +27,14 @@ class NoteController extends Controller
         ], Response::HTTP_OK);
     }
 
-    /**
-     * Store a newly created resource in storage.
-     */
     public function store(Request $request)
     {
         $validated = $request->validate([
             'user_id' => ['required', 'integer', 'exists:users,id'],
-
             'title' => ['required', 'string', 'min:3', 'max:255'],
             'body'  => ['nullable', 'string'],
             'status' => ['sometimes', 'required', 'string', Rule::in(['draft', 'published', 'archived'])],
             'is_pinned' => ['sometimes', 'boolean'],
-
             'categories' => ['sometimes', 'array', 'max:3'],
             'categories.*' => ['integer', 'distinct', 'exists:categories,id'],
         ]);
@@ -77,17 +60,15 @@ class NoteController extends Controller
         ], Response::HTTP_CREATED);
     }
 
-    /**
-     * Display the specified resource.
-     */
     public function show(string $id)
     {
-        // $note = DB::table('notes')
-        //     ->whereNull('deleted_at')
-        //     ->where('id', $id)
-        //     ->first();
-
-        $note = Note::find($id);
+        $note = Note::with([
+            'user:id,first_name,last_name',
+            'categories:id,name,color',
+            'tasks',
+            'comments',
+            'tasks.comments',
+        ])->find($id);
 
         if (!$note) {
             return response()->json([
@@ -100,9 +81,6 @@ class NoteController extends Controller
         ], Response::HTTP_OK);
     }
 
-    /**
-     * Update the specified resource in storage.
-     */
     public function update(Request $request, string $id)
     {
         $note = Note::find($id);
@@ -113,49 +91,71 @@ class NoteController extends Controller
             ], Response::HTTP_NOT_FOUND);
         }
 
-        // DB::table('notes')->where('id', $id)->update([
-        //     'title' => $request->title,
-        //     'body' => $request->body,
-        //     'updated_at' => now(),
-        // ]);
-
-        $note->update([
-            'title' => $request->title,
-            'body' => $request->body,
+        $validated = $request->validate([
+            'title' => ['sometimes', 'required', 'string', 'min:3', 'max:255'],
+            'body'  => ['nullable', 'string'],
+            'status' => ['sometimes', 'required', 'string', Rule::in(['draft', 'published', 'archived'])],
+            'is_pinned' => ['sometimes', 'boolean'],
+            'categories' => ['sometimes', 'array', 'max:3'],
+            'categories.*' => ['integer', 'distinct', 'exists:categories,id'],
         ]);
 
+        $note->update(collect($validated)->except('categories')->toArray());
+
+        if (array_key_exists('categories', $validated)) {
+            $note->categories()->sync($validated['categories']);
+        }
+
         return response()->json([
-            'message' => 'Poznámka bola úspešne aktualizovaná.'
+            'message' => 'Poznámka bola úspešne aktualizovaná.',
+            'note' => $note->load([
+                'user:id,first_name,last_name',
+                'categories:id,name,color',
+            ]),
         ], Response::HTTP_OK);
     }
 
-    /**
-     * Remove the specified resource from storage.
-     */
-
-    public function destroy(string $id) // toto je soft delete
+    public function destroy(string $id)
     {
-        // $note = DB::table('notes')
-        //     ->whereNull('deleted_at')
-        //     ->where('id', $id)
-        //     ->first();
-
         $note = Note::find($id);
 
         if (!$note) {
             return response()->json(['message' => 'Poznámka nenájdená.'], Response::HTTP_NOT_FOUND);
         }
 
-        // DB::table('notes')->where('id', $id)->update([
-        //     'deleted_at' => now(),
-        //     'updated_at' => now(),
-        // ]);
         $note->delete();
-
-//        DB::table('notes')->where('id', $id)->delete();
 
         return response()->json(['message' => 'Poznámka bola úspešne odstránená.'], Response::HTTP_OK);
     }
+
+    public function togglePin(string $id)
+    {
+        $note = Note::find($id);
+
+        if (!$note) {
+            return response()->json(['message' => 'Poznámka nenájdená.'], Response::HTTP_NOT_FOUND);
+        }
+
+        $note->update(['is_pinned' => !$note->is_pinned]);
+
+        return response()->json([
+            'message' => $note->is_pinned ? 'Poznámka bola pripnutá.' : 'Poznámka bola odopnutá.',
+            'is_pinned' => $note->is_pinned,
+        ], Response::HTTP_OK);
+    }
+
+    public function search(Request $request)
+    {
+        $q = trim((string) $request->query('q', ''));
+
+        $notes = Note::searchPublished($q);
+
+        return response()->json([
+            'query' => $q,
+            'notes' => $notes,
+        ], Response::HTTP_OK);
+    }
+
     public function statsByStatus()
     {
         $stats = DB::table('notes')
@@ -167,6 +167,7 @@ class NoteController extends Controller
             'stats' => $stats
         ]);
     }
+
     public function archiveOldDrafts()
     {
         $affected = DB::table('notes')
@@ -185,59 +186,13 @@ class NoteController extends Controller
 
     public function userNotesWithCategories(string $userId)
     {
-        $notes = DB::table('notes')
-            ->join('note_category', 'notes.id', '=', 'note_category.note_id')
-            ->join('categories', 'note_category.category_id', '=', 'categories.id')
-            ->where('notes.user_id', $userId)
-            ->orderBy('notes.updated_at', 'desc')
-            ->select('notes.id', 'notes.title', 'categories.name as category')
-            ->get();
+        $notes = Note::where('user_id', $userId)
+            ->with('categories:id,name,color')
+            ->orderByDesc('updated_at')
+            ->get(['id', 'title', 'user_id']);
 
         return response()->json([
             'notes' => $notes
         ]);
-    }
-
-    public function togglePin(string $id)
-    {
-        $note = DB::table('notes')
-            ->whereNull('deleted_at')
-            ->where('id', $id)
-            ->first();
-
-        if (!$note) {
-            return response()->json(['message' => 'Poznámka nenájdená.'], Response::HTTP_NOT_FOUND);
-        }
-
-        DB::table('notes')->where('id', $id)->update([
-            'is_pinned' => !$note->is_pinned,
-            'updated_at' => now(),
-        ]);
-
-        return response()->json([
-            'message' => $note->is_pinned ? 'Poznámka bola odopnutá.' : 'Poznámka bola pripnutá.',
-            'is_pinned' => !$note->is_pinned,
-        ], Response::HTTP_OK);
-    }
-
-    public function search(Request $request)
-    {
-        $q = trim((string) $request->query('q', ''));
-
-        $notes = DB::table('notes')
-            ->whereNull('deleted_at')
-            ->where('status', 'published')
-            ->where(function ($x) use ($q) {
-                $x->where('title', 'like', "%{$q}%")
-                    ->orWhere('body', 'like', "%{$q}%");
-            })
-            ->orderBy('updated_at', 'desc')
-            ->limit(20)
-            ->get();
-
-        return response()->json([
-            'query' => $q,
-            'notes' => $notes,
-        ], Response::HTTP_OK);
     }
 }

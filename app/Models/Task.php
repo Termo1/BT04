@@ -33,15 +33,4 @@ class Task extends Model
     {
         return $this->morphMany(Comment::class, 'commentable');
     }
-    public function tasks(): HasManyThrough
-    {
-        return $this->hasManyThrough(
-            Task::class,
-            Note::class,
-            'user_id', // Foreign key on the users table...
-            'note_id', // Foreign key on the tasks table...
-            'id', // Local key on the users table...
-            'id' // Local key on the notes table...
-        );
-    }
 }

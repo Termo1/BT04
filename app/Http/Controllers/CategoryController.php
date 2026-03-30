@@ -2,41 +2,37 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Category;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
-use Illuminate\Support\Facades\DB;
 
 class CategoryController extends Controller
 {
     public function index()
     {
-        $categories = DB::table('categories')
-            ->orderBy('name')
-            ->get();
+        $categories = Category::orderBy('name')->get();
 
         return response()->json(['categories' => $categories], Response::HTTP_OK);
     }
 
     public function store(Request $request)
     {
-        $request->validate([
-            'name' => 'required|string|max:64|unique:categories,name',
+        $validated = $request->validate([
+            'name'  => ['required', 'string', 'max:64', 'unique:categories,name'],
+            'color' => ['nullable', 'string', 'regex:/^#[0-9A-Fa-f]{6}$/'],
         ]);
 
-        DB::table('categories')->insert([
-            'name' => $request->name,
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
+        $category = Category::create($validated);
 
         return response()->json([
             'message' => 'Kategória bola úspešne vytvorená.',
+            'category' => $category,
         ], Response::HTTP_CREATED);
     }
 
     public function show(string $id)
     {
-        $category = DB::table('categories')->where('id', $id)->first();
+        $category = Category::find($id);
 
         if (!$category) {
             return response()->json([
@@ -49,7 +45,7 @@ class CategoryController extends Controller
 
     public function update(Request $request, string $id)
     {
-        $category = DB::table('categories')->where('id', $id)->first();
+        $category = Category::find($id);
 
         if (!$category) {
             return response()->json([
@@ -57,23 +53,22 @@ class CategoryController extends Controller
             ], Response::HTTP_NOT_FOUND);
         }
 
-        $request->validate([
-            'name' => 'required|string|max:64|unique:categories,name,' . $id,
+        $validated = $request->validate([
+            'name'  => ['required', 'string', 'max:64', 'unique:categories,name,' . $id],
+            'color' => ['nullable', 'string', 'regex:/^#[0-9A-Fa-f]{6}$/'],
         ]);
 
-        DB::table('categories')->where('id', $id)->update([
-            'name' => $request->name,
-            'updated_at' => now(),
-        ]);
+        $category->update($validated);
 
         return response()->json([
             'message' => 'Kategória bola úspešne aktualizovaná.',
+            'category' => $category,
         ], Response::HTTP_OK);
     }
 
     public function destroy(string $id)
     {
-        $category = DB::table('categories')->where('id', $id)->first();
+        $category = Category::find($id);
 
         if (!$category) {
             return response()->json([
@@ -81,7 +76,7 @@ class CategoryController extends Controller
             ], Response::HTTP_NOT_FOUND);
         }
 
-        DB::table('categories')->where('id', $id)->delete();
+        $category->delete();
 
         return response()->json([
             'message' => 'Kategória bola úspešne odstránená.',
